@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
@@ -33,41 +34,78 @@ public class TwitterImageSync {
 	Twitter twitter;
 	User user;
 
+	long friendsCursor = -1;
+
+	int apiTryCount = 0;
+	static final int MAX_API_TRIES = 3;
+	TwitterException twitterException;
+
 	public TwitterImageSync() {
-		try {
-			// gets Twitter instance with default credentials
-			twitter = new TwitterFactory().getInstance();
-			System.out.println();
-			user = twitter.verifyCredentials();
-		} catch (TwitterException te) {
-			te.printStackTrace();
-			System.out.println(te.getMessage());
-			System.exit(-1);
+		// verify this doesn't throw exceptions
+		twitter = new TwitterFactory().getInstance();
+	}
+
+	private void verifyCredentials() throws TwitterException {
+		// default credentials
+		user = twitter.verifyCredentials();
+	}
+
+	/*
+	 * two cases where we throw higher due to inability to handle: 1. api failed
+	 * too many times 2. unknown api error
+	 */
+	private void handleTwitterException(TwitterException te) throws TwitterException {
+		if (twitterException == null) {
+			twitterException = te;
+		}
+
+		if (!twitterException.equals(te)) {
+			apiTryCount = 0;
+			twitterException = te;
+		}
+
+		if (++apiTryCount >= MAX_API_TRIES) {
+			throw te;
+		}
+
+		if (twitterException.exceededRateLimitation()) {
+			int secondsUntilReset = te.getRateLimitStatus().getSecondsUntilReset();
+			// wait secondsUntilReset;
+		} else if (te.isCausedByNetworkIssue()) {
+			// todo: pause until network is restored
+		} else {
+			throw te;
 		}
 	}
 
-	private List<Long> getFriends() {
+	private List<Long> getFriends() throws TwitterException {
 		List<Long> friends = new ArrayList<Long>();
 
 		long cursor = -1;
+		IDs ids;
 
-		try {
-			while (cursor != 0) {
-				IDs ids = twitter.getFriendsIDs(cursor);
-
-				for (long l : ids.getIDs()) {
-					friends.add(l);
+		while (cursor != 0) {
+			// todo: lambda
+			while (true) {
+				try {
+					ids = twitter.getFriendsIDs(friendsCursor);
+					break;
+				} catch (TwitterException te) {
+					handleTwitterException(te);
 				}
-
-				cursor = ids.getNextCursor();
 			}
-		} catch (TwitterException te) {
+
+			for (long l : ids.getIDs()) {
+				friends.add(l);
+			}
+
+			cursor = ids.getNextCursor();
 		}
 
 		return friends;
 	}
 
-	private List<Status> getStatuses(String username, long since_id, long max_id) {
+	private List<Status> getStatuses(String username, long since_id, long max_id) throws TwitterException {
 		List<Status> statuses = new ArrayList<Status>();
 
 		Paging paging = new Paging(1, 200);
@@ -75,95 +113,117 @@ public class TwitterImageSync {
 		if (since_id >= 0) {
 			paging.setSinceId(since_id);
 		}
-
 		paging.setMaxId((max_id >= 0) ? max_id : Long.MAX_VALUE);
 
 		while (true) {
-			try {
-				List<Status> statusPage = (!username.equals("")) ? twitter.getUserTimeline(username, paging)
-						: twitter.getHomeTimeline(paging);
+			List<Status> statusPage;
 
-				if (statusPage.size() == 0) {
+			while (true) {
+				try {
+					statusPage = (username != null) ? twitter.getUserTimeline(username, paging)
+							: twitter.getHomeTimeline(paging);
 					break;
+				} catch (TwitterException te) {
+					handleTwitterException(te);
 				}
+			}
 
-				statuses.addAll(statusPage);
-
-				paging.setMaxId(statuses.get(statuses.size() - 1).getId() - 1);
-
-				System.out.println("Last tweet ID: " + Long.toString(paging.getMaxId()));
-			} catch (TwitterException e) {
-				e.printStackTrace();
+			if (statusPage.size() == 0) {
 				break;
 			}
-		}
 
+			statuses.addAll(statusPage);
+
+			paging.setMaxId(statuses.get(statuses.size() - 1).getId() - 1);
+
+			// System.out.println("Last tweet ID: " +
+			// Long.toString(paging.getMaxId()));
+		}
+		
 		return statuses;
 	}
 
-	/*
-	 * private long initFollowing() { long since_id = Long.MAX_VALUE;
-	 * 
-	 * List<List<Status>> statuses = new ArrayList<List<Status>>();
-	 * 
-	 * // todo: check user on filter, user already done, etc. for (following
-	 * users) { List<Status> statuses = getStatuses(username, -1, -1);
-	 * 
-	 * // mediaDownload(statuses);
-	 * 
-	 * // problem: last tweet by following is 2013, 2017 -> hometimeline checks
-	 * back to 2013 // solution: since_id should be based on time(?) init on
-	 * user began, not "most recent tweet by user" }
-	 * 
-	 * for (List<Status> list : statuses) { if (list.size() > 0) { since_id =
-	 * Math.min(since_id, list.get(0).getId()); } }
-	 * 
-	 * if (since_id == Long.MAX_VALUE) { since_id = 0; }
-	 * 
-	 * return since_id; }
-	 */
+	private long initSync() throws TwitterException {
+		List<Long> friends = getFriends();
+
+		List<List<Status>> allStatuses;
+
+		long since_id = Long.MAX_VALUE;
+
+		// todo: check user on filter, user already done, etc.
+		for (long user_id : friends) {
+			List<Status> userStatuses = getStatuses(user_id, -1, -1);
+
+			allStatuses.add(userStatuses);
+
+			getMedia(userStatuses);
+		}
+
+		// problem: last tweet by following is 2013, 2017 -> hometimeline checks
+		// back to 2013
+		// solution: since_id should be based on time(?) init on user began, not
+		// "most recent tweet by user" }
+		for (List<Status> userStatuses : allStatuses) {
+			if (userStatuses.size() > 0) {
+				long currentSinceId = Math.max(userStatuses.get(0).getId(), timeScanBegan.toId());
+				since_id = Math.min(since_id, currentSinceId);
+			}
+		}
+
+		if (since_id == Long.MAX_VALUE) {
+			since_id = -1;
+		}
+
+		return since_id;
+	}
 
 	private void getMedia(List<Status> statuses) {
 		for (Status status : statuses) {
 			for (ExtendedMediaEntity media : status.getExtendedMediaEntities()) {
-				System.out.println(media.getMediaURL());
+				// System.out.println(media.getMediaURL());
 
-				try {
-					String urlString = media.getMediaURL();
+				String urlString = media.getMediaURL();
 
-					if (media.getType().equals("video") || media.getType().equals("animated_gif")) {
-						Variant[] variants = media.getVideoVariants();
+				if (media.getType().equals("video") || media.getType().equals("animated_gif")) {
+					Variant[] variants = media.getVideoVariants();
 
-						int bitrate = -1;
-						Variant bestVariant = null;
+					int bitrate = -1;
+					Variant bestVariant = null;
 
-						for (Variant variant : variants) {
-							if (variant.getContentType().equals("video/mp4") && variant.getBitrate() > bitrate) {
-								bitrate = variant.getBitrate();
-								bestVariant = variant;
-							}
-						}
-
-						if (bestVariant != null) {
-							urlString = bestVariant.getUrl();
+					for (Variant variant : variants) {
+						if (variant.getContentType().equals("video/mp4") && variant.getBitrate() > bitrate) {
+							bitrate = variant.getBitrate();
+							bestVariant = variant;
 						}
 					}
 
-					// format path
-					// todo: if (retweet) { create subdirectory for user }
-					String username = status.getUser().getScreenName();
+					if (bestVariant != null) {
+						urlString = bestVariant.getUrl();
+					}
+				}
 
-					DateFormat df = new SimpleDateFormat("yyMMdd-HHmmss");
-					Date d = status.getCreatedAt();
-					String date = df.format(d);
+				// format path
+				// todo: if (retweet) { create subdirectory for user }
+				String username = status.getUser().getScreenName();
 
-					String filename = date + "_" + urlString.substring(urlString.lastIndexOf('/') + 1);
+				DateFormat df = new SimpleDateFormat("yyMMdd-HHmmss");
+				Date d = status.getCreatedAt();
+				String date = df.format(d);
 
-					File file = new File(username + File.separator + filename);
+				String filename = date + "_" + urlString.substring(urlString.lastIndexOf('/') + 1);
 
-					if (!file.exists()) {
-						// get file
-						URL url = new URL(urlString);
+				File file = new File(username + File.separator + filename);
+
+				if (!file.exists()) {
+					// get file
+					URL url;
+					try {
+						url = new URL(urlString);
+					} catch (MalformedURLException e1) {
+						// TODO Auto-generated catch block
+						e1.printStackTrace();
+					}
+					try {
 						InputStream in = new BufferedInputStream(url.openStream());
 						ByteArrayOutputStream out = new ByteArrayOutputStream();
 						byte[] buf = new byte[1024];
@@ -174,42 +234,33 @@ public class TwitterImageSync {
 						out.close();
 						in.close();
 						byte[] response = out.toByteArray();
-
-						// save file
-						file.getParentFile().mkdirs();
-
-						try (FileOutputStream fos = new FileOutputStream(file)) {
-							fos.write(response);
-							fos.close();
-
-						} catch (IOException e) {
-							e.printStackTrace();
-						}
+					} catch (IOException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
 					}
-				} catch (Exception e) {
-					e.printStackTrace();
-					return;
+					
+					// save file
+					file.getParentFile().mkdirs();
+
+					try (FileOutputStream fos = new FileOutputStream(file)) {
+						fos.write(response);
+						fos.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
 				}
 			}
 		}
 	}
 
-	/*private boolean log() {
-		FileOutputStream out = null;
-
-		try {
-			out = new FileOutputStream("output.txt");
-
-			out.write(scanTime);
-			out.write(newestImageTime);
-		} catch (IOException e) {
-			e.printStackTrace();
-		} finally {
-			if (out != null) {
-				out.close();
-			}
-		}
-	}*/
+	/*
+	 * private boolean log() { FileOutputStream out = null;
+	 * 
+	 * try { out = new FileOutputStream("output.txt");
+	 * 
+	 * out.write(scanTime); out.write(newestImageTime); } catch (IOException e)
+	 * { e.printStackTrace(); } finally { if (out != null) { out.close(); } } }
+	 */
 
 	// long since_id = initFollowing();
 
@@ -220,8 +271,15 @@ public class TwitterImageSync {
 	public static void main(String[] args) {
 		TwitterImageSync tis = new TwitterImageSync();
 
+		try {
+			tis.verifyCredentials();
+		} catch (TwitterException te) {
+			te.printStackTrace();
+			System.out.println(te.getMessage());
+		}
+
 		/*
-		 * boolean init = false;
+		 * boolean init = false; // get this from log file
 		 * 
 		 * if (!init) { tis.initFollowing(); }
 		 */
