@@ -40,9 +40,8 @@ public class TwitterImageSync {
 
 	long friendsCursor = -1;
 
-	int apiTryCount = 0;
-	static final int MAX_API_TRIES = 3;
-	TwitterException twitterException;
+	static final int MAX_API_ATTEMPTS = 3;
+	TwitterException lastTwitterException;
 
 	static final String SYNC_FILE = "sync.txt";
 
@@ -59,25 +58,18 @@ public class TwitterImageSync {
 		user = twitter.verifyCredentials();
 	}
 
-	/*
-	 * two cases where we throw higher due to inability to handle: 1. api failed
-	 * too many times 2. unknown api error
-	 */
 	private void handleTwitterException(TwitterException te) throws TwitterException {
-		if (twitterException == null) {
-			twitterException = te;
+		if (lastTwitterException == null) {
+			lastTwitterException = te;
 		}
 
-		if (!twitterException.equals(te)) {
+		if (!lastTwitterException.equals(te)) {
 			apiTryCount = 0;
-			twitterException = te;
+			lastTwitterException = te;
 		}
 
-		if (++apiTryCount >= MAX_API_TRIES) {
-			throw te;
-		}
-
-		if (twitterException.exceededRateLimitation()) {
+		// TODO handle various exception causes
+		if (te.exceededRateLimitation()) {
 			int secondsUntilReset = te.getRateLimitStatus().getSecondsUntilReset();
 			// wait secondsUntilReset;
 		} else if (te.isCausedByNetworkIssue()) {
@@ -87,26 +79,29 @@ public class TwitterImageSync {
 		}
 	}
 
+	// TODO Junit
 	private List<User> getFriends(String username) throws TwitterException {
 		List<User> friends = new ArrayList<User>();
+		PagableResponseList<User> friendsPage = new PagableResponseList<User>();
 
 		long cursor = -1;
-		PagableResponseList<User> users;
 
 		while (cursor != 0) {
-			// TODO lambda
-			while (true) {
+			for (int i = 1; i <= MAX_API_ATTEMPTS; i++) {
 				try {
-					users = twitter.getFriendsList(username, cursor, 200);
+					friendsPage = twitter.getFriendsList(username, cursor, 200);
 					break;
 				} catch (TwitterException te) {
+					if (i == MAX_API_ATTEMPTS) {
+						throw te;
+					}
 					handleTwitterException(te);
 				}
 			}
 
-			friends.addAll(users);
+			friends.addAll(friendsPage);
 
-			cursor = users.getNextCursor();
+			cursor = friendsPage.getNextCursor();
 		}
 
 		return friends;
@@ -114,6 +109,7 @@ public class TwitterImageSync {
 
 	private List<Status> getStatuses(String username, long sinceId, int query) throws TwitterException {
 		List<Status> statuses = new ArrayList<Status>();
+		List<Status> statusPage = new ArrayList<Status>();
 
 		Paging paging = new Paging(1, 200);
 
@@ -122,9 +118,7 @@ public class TwitterImageSync {
 		}
 
 		while (true) {
-			List<Status> statusPage = new ArrayList<Status>();
-
-			while (true) {
+			for (int i = 1; i <= MAX_API_ATTEMPTS; i++) {
 				try {
 					switch (query) {
 					case USER_TIMELINE:
@@ -137,6 +131,9 @@ public class TwitterImageSync {
 					}
 					break;
 				} catch (TwitterException te) {
+					if (i == MAX_API_ATTEMPTS) {
+						throw te;
+					}
 					handleTwitterException(te);
 				}
 			}
@@ -156,128 +153,118 @@ public class TwitterImageSync {
 		return statuses;
 	}
 
-	// TODO modularize twitterexception handling inside method
-	private boolean sync() throws TwitterException {
-        // user timelines
-        List<User> users = getUsers();
-       
-        for (User user: users) {
-            String username = user.getName();
+	private boolean sync() throws TwitterException, MalformedURLException, IOException {
+		// user timelines
+		List<User> users = getUsers();
+
+		for (User user : users) {
+			String username = user.getName();
+
+			long sinceIdUser = getSinceId(username);
+
+			List<Status> userStatuses = getStatuses(username, sinceIdUser, USER_TIMELINE);
+
+			if (userStatuses.size() > 0) {
+				syncMedia(userStatuses);
+
+				setSinceId(username, userStatuses.get(0).getId());
+			}
+		}
+
+		// favorites
+		long sinceIdFavorites = getSinceIdFavorites();
+
+		List<Status> favorites = getStatuses(username, sinceIdFavorites, FAVORITES);
+
+		if (favorites.size() > 0) {
+			syncMedia(userStatuses);
+
+			setSinceId(username, favorites.get(0).getId());
+		}
+	}
+
+	// TODO after getting statuses, log them so if anything goes wrong no need
+	// to re-get them from api
+
+	private void syncMedia(List<Status> statuses) throws MalformedURLException, IOException {
+        Set<String> usernames = new HashSet<String>();
  
-            long sinceIdUser = getSinceId(username);
+        for (Status status : statuses) {
+            for (ExtendedMediaEntity media : status.getExtendedMediaEntities()) {
+                // System.out.println(media.getMediaURL());
  
-            List<Status> userStatuses = getStatuses(username, sinceIdUser, USER_TIMELINE);
+                String urlString = media.getMediaURL();
  
-            if (userStatuses.size() > 0) {
-                // TODO while loop
-                try {
-                    syncMedia(userStatuses);
+                if (media.getType().equals("video") || media.getType().equals("animated_gif")) {
+                    Variant[] variants = media.getVideoVariants();
  
-                    setSinceId(username, userStatuses.get(0).getId());
+                    int bitrate = -1;
+                    Variant bestVariant = null;
+ 
+                    for (Variant variant : variants) {
+                        if (variant.getContentType().equals("video/mp4") && variant.getBitrate() > bitrate) {
+                            bitrate = variant.getBitrate();
+                            bestVariant = variant;
+                        }
+                    }
+ 
+                    if (bestVariant != null) {
+                        urlString = bestVariant.getUrl();
+                    }
+                }
+ 
+                // format path
+                // TODO if (retweet) { create subdirectory for user }
+                String username = status.getUser().getName(); // double check
+                                                                // this is
+                                                                // actually
+                                                                // username
+                usernames.add(username);
+ 
+                DateFormat df = new SimpleDateFormat("yyMMdd-HHmmss");
+                Date d = status.getCreatedAt();
+                String date = df.format(d);
+ 
+                String filename = date + "_" + urlString.substring(urlString.lastIndexOf('/') + 1);
+ 
+                File file = new File(username + File.separator + filename);
+ 
+                if (!file.exists()) {
+                    try {
+                        URL url = new URL(urlString);
+                    }
+                       
+                    byte[] response = new byte[0];
+ 
+                    // get file
+                    try (InputStream inputStream = new BufferedInputStream(url.openStream());
+                            ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                        byte[] byteBuffer = new byte[1024];
+                        int n = 0;
+                        while (-1 != (n = inputStream.read(byteBuffer))) {
+                            outputStream.write(byteBuffer, 0, n);
+                        }
+                        response = outputStream.toByteArray();
+                    }
+                       
+                    file.getParentFile().mkdirs();
+ 
+                    // save file
+                    try (FileOutputStream fos = new FileOutputStream(file)) {
+                        fos.write(response);
+                    }
+ 
+                    // write log
+                    // http://stackoverflow.com/questions/1625234/how-to-append-text-to-an-existing-file-in-java
+                    try (FileWriter fw = new FileWriter(username + File.separator + username + ".txt", true);
+                            BufferedWriter bw = new BufferedWriter(fw);
+                            PrintWriter pw = new PrintWriter(bw)) {
+                        pw.println(filename + '_' + Long.toString(status.getId()));
+                    }
                 }
             }
         }
- 
-        // favorites
-        long sinceIdFavorites = getSinceIdFavorites();
- 
-        List<Status> favorites = getStatuses(username, sinceIdFavorites, FAVORITES);
- 
-        if (favorites.size() > 0) {
-            // TODO while loop
-            try {
-                syncMedia(userStatuses);
- 
-                setSinceId(username, userStatuses.get(0).getId());
-            }
-        }
     }
-
-	private void syncMedia(List<Status> statuses) {
-		Set<String> usernames = new HashSet<String>();
-
-		for (Status status : statuses) {
-			for (ExtendedMediaEntity media : status.getExtendedMediaEntities()) {
-				// System.out.println(media.getMediaURL());
-
-				String urlString = media.getMediaURL();
-
-				if (media.getType().equals("video") || media.getType().equals("animated_gif")) {
-					Variant[] variants = media.getVideoVariants();
-
-					int bitrate = -1;
-					Variant bestVariant = null;
-
-					for (Variant variant : variants) {
-						if (variant.getContentType().equals("video/mp4") && variant.getBitrate() > bitrate) {
-							bitrate = variant.getBitrate();
-							bestVariant = variant;
-						}
-					}
-
-					if (bestVariant != null) {
-						urlString = bestVariant.getUrl();
-					}
-				}
-
-				// format path
-				// TODO if (retweet) { create subdirectory for user }
-				String username = status.getUser().getName(); // double check
-																// this is
-																// actually
-																// username
-				usernames.add(username);
-
-				DateFormat df = new SimpleDateFormat("yyMMdd-HHmmss");
-				Date d = status.getCreatedAt();
-				String date = df.format(d);
-
-				String filename = date + "_" + urlString.substring(urlString.lastIndexOf('/') + 1);
-
-				File file = new File(username + File.separator + filename);
-
-				if (!file.exists()) {
-					try {
-						URL url = new URL(urlString);
-						
-						byte[] response = new byte[0];
-
-						// get file
-						try (InputStream inputStream = new BufferedInputStream(url.openStream());
-								ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-							byte[] byteBuffer = new byte[1024];
-							int n = 0;
-							while (-1 != (n = inputStream.read(byteBuffer))) {
-								outputStream.write(byteBuffer, 0, n);
-							}
-							response = outputStream.toByteArray();
-						}
-						
-						file.getParentFile().mkdirs();
-
-						// save file
-						try (FileOutputStream fos = new FileOutputStream(file)) {
-							fos.write(response);
-						}
-
-						// write log
-						// http://stackoverflow.com/questions/1625234/how-to-append-text-to-an-existing-file-in-java
-						try (FileWriter fw = new FileWriter(username + File.separator + username + ".txt", true);
-								BufferedWriter bw = new BufferedWriter(fw);
-								PrintWriter pw = new PrintWriter(bw)) {
-							pw.println(filename + '_' + Long.toString(status.getId()));
-						}
-					} catch (MalformedURLException e1) {
-						// TODO Auto-generated catch block
-						e1.printStackTrace();
-					} catch (IOException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					} 
-				}
-			}
-		}
-	}
 
 	// TODO retweet dupe
 
@@ -296,6 +283,8 @@ public class TwitterImageSync {
 		} catch (TwitterException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
+		} catch (MalformedURLException e) {
+		} catch (IOException e) {
 		}
 
 		/*
