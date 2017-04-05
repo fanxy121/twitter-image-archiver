@@ -32,27 +32,30 @@ import twitter4j.User;
 public class TwitterImageSync {
 
 	// TODO userid vs. username + folder names
-	// TODO singleton + other design patterns
 	// TODO http://twitter4j.org/javadoc/twitter4j/RateLimitStatus.html
 
-	Twitter twitter;
-	User user;
+	private static TwitterImageSync instance = null;
 
-	long friendsCursor = -1;
+	private Twitter twitter;
+	private User user;
 
-	static final int MAX_API_ATTEMPTS = 3;
-	TwitterException lastTwitterException;
+	private static final int MAX_API_ATTEMPTS = 3;
 
-	static final String SYNC_FILE = "sync.txt";
+	private static final int USER_TIMELINE = 0;
+	private static final int FAVORITES = 1;
 
-	static final int USER_TIMELINE = 0;
-	static final int FAVORITES = 1;
-
-	public TwitterImageSync() {
-		// verify this doesn't throw exceptions
+	private TwitterImageSync() {
 		twitter = new TwitterFactory().getInstance();
 	}
 
+	public static TwitterImageSync getInstance() {
+		if (instance == null) {
+			instance = new TwitterImageSync();
+		}
+		return instance;
+	}
+
+	// TODO check if this is necessary
 	private void verifyCredentials() throws TwitterException {
 		// default credentials
 		user = twitter.verifyCredentials();
