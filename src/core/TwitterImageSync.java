@@ -1,23 +1,26 @@
 package core;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import twitter4j.ExtendedMediaEntity;
@@ -41,6 +44,8 @@ public class TwitterImageSync {
 
 	private static final int USER_TIMELINE = 0;
 	private static final int FAVORITES = 1;
+
+	// TODO JUnit
 
 	private TwitterImageSync() {
 		twitter = new TwitterFactory().getInstance();
@@ -74,7 +79,6 @@ public class TwitterImageSync {
 		}
 	}
 
-	// TODO Junit
 	private List<User> getFriends(String username) throws TwitterException {
 		List<User> friends = new ArrayList<User>();
 		PagableResponseList<User> friendsPage = null;
@@ -148,19 +152,92 @@ public class TwitterImageSync {
 		return statuses;
 	}
 
-	// TODO
-	private List<String> getUsernames(int query) {
+	private String getUsernamesFilename(int query) {
+		String dir = null;
+
+		switch (query) {
+			case USER_TIMELINE:
+				dir = "Timelines";
+				break;
+			case FAVORITES:
+				dir = "Favorites";
+				break;
+			default:
+		}
+
+		return dir + File.separator + "usernames.txt";
+	}
+
+	private List<String> getUsernames(int query) throws IOException {
 		List<String> usernames = new ArrayList<String>();
+
+		File file = new File(getUsernamesFilename(query));
+
+		if (file.isFile()) {
+			// http://stackoverflow.com/questions/5868369/how-to-read-a-large-text-file-line-by-line-using-java
+			try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+				String line;
+				while ((line = br.readLine()) != null) {
+					String s = line.trim();
+
+					if (s.length() > 0) {
+						usernames.add(s);
+					}
+				}
+			}
+		}
 
 		return usernames;
 	}
 
-	private long getSinceId(String username, int query) {
-		return -1;
+	private String getSinceIdFilename(String username, int query) {
+		String dir = null;
+
+		switch (query) {
+			case USER_TIMELINE:
+				dir = "Timelines";
+				break;
+			case FAVORITES:
+				dir = "Favorites";
+				break;
+			default:
+		}
+
+		return dir + File.separator + username + ".txt";
 	}
 
-	private void setSinceId(String username, long sinceId, int query) {
+	private long getSinceId(String username, int query) throws IOException {
+		long sinceId = -1;
 
+		File file = new File(getSinceIdFilename(username, query));
+
+		if (file.isFile()) {
+			try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+				String line;
+				while ((line = br.readLine()) != null) {
+					String s = line.trim();
+
+					if (s.length() > 0) {
+						sinceId = Long.parseLong(s);
+						break;
+					}
+				}
+			}
+		}
+
+		return sinceId;
+	}
+
+	private void setSinceId(String username, long sinceId, int query) throws IOException {
+		String pathString = getSinceIdFilename(username, query);
+
+		File file = new File(pathString);
+
+		if (!file.isFile()) {
+			file.getParentFile().mkdirs();
+		}
+
+		Files.write(Paths.get(pathString), Long.toString(sinceId).getBytes());
 	}
 
 	private void sync() throws TwitterException, IOException {
@@ -173,6 +250,14 @@ public class TwitterImageSync {
 				List<Status> statuses = getStatuses(username, sinceId, query);
 
 				if (statuses.size() > 0) {
+					// TODO include date, time, etc.
+					// https://www.tutorialspoint.com/java/io/objectoutputstream_writeobject.htm
+					// https://www.tutorialspoint.com/java/io/objectinputstream_readobject.htm
+					try (FileOutputStream out = new FileOutputStream("test.txt");
+							ObjectOutputStream oos = new ObjectOutputStream(out)) {
+						oos.writeObject(statuses);
+					}
+
 					syncMedia(statuses);
 
 					setSinceId(username, statuses.get(0).getId(), query);
@@ -181,8 +266,9 @@ public class TwitterImageSync {
 		}
 	}
 
-	// TODO after getting statuses, log them so if anything goes wrong no need
-	// to re-get them from api
+	private void recover() {
+		// TODO
+	}
 
 	private void syncMedia(List<Status> statuses) throws IOException {
 		for (Status status : statuses) {
@@ -231,7 +317,7 @@ public class TwitterImageSync {
 
 				String log = date + "," + originalFilename + "," + Long.toString(status.getId());
 
-				if (!file.exists()) {
+				if (!file.isFile()) {
 					URL url;
 					try {
 						url = new URL(urlString);
