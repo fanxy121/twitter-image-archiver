@@ -5,11 +5,13 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
 import java.net.MalformedURLException;
@@ -20,6 +22,7 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -27,6 +30,8 @@ import twitter4j.ExtendedMediaEntity;
 import twitter4j.ExtendedMediaEntity.Variant;
 import twitter4j.PagableResponseList;
 import twitter4j.Paging;
+import twitter4j.Query;
+import twitter4j.QueryResult;
 import twitter4j.Status;
 import twitter4j.Twitter;
 import twitter4j.TwitterException;
@@ -68,13 +73,17 @@ public class TwitterImageSync {
 		try {
 			if (te.exceededRateLimitation()) {
 				int secondsUntilReset = te.getRetryAfter();
+				System.out.println(
+						"Handling exceeded rate, sleeping for " + Integer.toString(secondsUntilReset + 60) + "seconds");
 				TimeUnit.SECONDS.sleep(secondsUntilReset + 60);
 			} else if (te.isCausedByNetworkIssue()) {
+				System.out.println("Network issue, sleeping for " + Integer.toString(NETWORK_WAIT_SECONDS));
 				TimeUnit.SECONDS.sleep(NETWORK_WAIT_SECONDS);
 			} else {
 				throw te;
 			}
 		} catch (InterruptedException e) {
+			System.out.println("Interrupted during sleep");
 			throw te;
 		}
 	}
@@ -181,6 +190,7 @@ public class TwitterImageSync {
 					String s = line.trim();
 
 					if (s.length() > 0) {
+						System.out.println("Got username: " + s);
 						usernames.add(s);
 					}
 				}
@@ -241,43 +251,61 @@ public class TwitterImageSync {
 	}
 
 	private void sync() throws TwitterException, IOException {
-		for (int query : new int[] {USER_TIMELINE, FAVORITES}) {
-			List<String> usernames = getUsernames(query);
+		// for (int query : new int[] {USER_TIMELINE, FAVORITES}) {
+		int query = USER_TIMELINE;
+		System.out.println("Getting usernames from file");
+		List<String> usernames = getUsernames(query);
+		System.out.println("Successfully got usernames from file");
 
-			for (String username : usernames) {
-				long sinceId = getSinceId(username, query);
+		for (String username : usernames) {
+			System.out.println("Working with username: " + username);
+			long sinceId = getSinceId(username, query);
+			System.out.println("Got sinceId: " + Long.toString(sinceId));
 
-				List<Status> statuses = getStatuses(username, sinceId, query);
+			System.out.println("Getting statuses for: " + username);
+			List<Status> statuses = getStatuses(username, sinceId, query);
+			System.out.println("Finished getting statuses for " + username);
 
-				if (statuses.size() > 0) {
-					// TODO include date, time, etc.
-					// https://www.tutorialspoint.com/java/io/objectoutputstream_writeobject.htm
-					// https://www.tutorialspoint.com/java/io/objectinputstream_readobject.htm
-					try (FileOutputStream out = new FileOutputStream("test.txt");
-							ObjectOutputStream oos = new ObjectOutputStream(out)) {
-						oos.writeObject(statuses);
-					}
+			// TODO statuses.size(), Got URL -> got status #, twitterId, etc.
+			// TODO spaces in filename: Timelines\‚í‚½‚¨\‚ê‚¨‚¦‚ñ \
+			// TIA_‚½73a\170402-053231_C8YwhvGUQAAS7Ue.jpg (The system cannot
+			// find the path specified)
 
-					syncMedia(statuses);
-
-					setSinceId(username, statuses.get(0).getId(), query);
+			if (statuses.size() > 0) {
+				System.out.println("Got >0 statuses for: " + username);
+				// TODO include date, time, etc.
+				// https://www.tutorialspoint.com/java/io/objectoutputstream_writeobject.htm
+				// https://www.tutorialspoint.com/java/io/objectinputstream_readobject.htm
+				try (FileOutputStream out = new FileOutputStream("test.txt");
+						ObjectOutputStream oos = new ObjectOutputStream(out)) {
+					oos.writeObject(statuses);
 				}
+
+				System.out.println("Getting media for: " + username);
+				syncMedia(statuses, query);
+				System.out.println("Finished getting media for " + username);
+
+				System.out.println("Setting sinceId of " + Long.toString(statuses.get(0).getId()) + "for: " + username);
+				setSinceId(username, statuses.get(0).getId(), query);
 			}
 		}
+		// }
 	}
 
 	private void recover() {
 		// TODO
 	}
 
-	private void syncMedia(List<Status> statuses) throws IOException {
+	private void syncMedia(List<Status> statuses, int query) throws IOException {
+		System.out.println("Getting media");
+
 		for (Status status : statuses) {
 			for (ExtendedMediaEntity media : status.getExtendedMediaEntities()) {
-				// System.out.println(media.getMediaURL());
-
 				String urlString = media.getMediaURL();
+				System.out.println("Got URL " + urlString);
 
 				if (media.getType().equals("video") || media.getType().equals("animated_gif")) {
+					System.out.println("URL is video or gif");
 					Variant[] variants = media.getVideoVariants();
 
 					int bitrate = -1;
@@ -296,9 +324,18 @@ public class TwitterImageSync {
 				}
 
 				// format path
-				// TODO check this is correct username
+				// TODO check this is correct username // it's not, it's screen
+				// name
 				String username = status.getUser().getName();
-				String directory = username + File.separator;
+
+				// TODO array
+				String directory = "";
+				if (query == USER_TIMELINE) {
+					directory += "Timelines" + File.separator + username + File.separator;
+				} else if (query == FAVORITES) {
+					directory += "Favorites" + File.separator + username + File.separator;
+				}
+
 				if (status.isRetweet()) {
 					String retweetUsername = status.getRetweetedStatus().getUser().getName();
 
@@ -361,8 +398,132 @@ public class TwitterImageSync {
 			}
 		}
 	}
+	// TODO orig
+
+	private static void importStatuses() {
+		try {
+			// create an ObjectInputStream for the file we created before
+			ObjectInputStream ois = new ObjectInputStream(new FileInputStream("test.txt"));
+
+			// read and print an object and cast it as string
+			// byte[] read = (byte[]) ois.readObject();
+			List<Status> statuses = (List<Status>) ois.readObject();
+			System.out.println("# statuses: " + Integer.toString(statuses.size()));
+			System.out.println("Last twitterId: " + Long.toString(statuses.get(statuses.size() - 1).getId()));
+		} catch (IOException e) {
+			e.printStackTrace();
+		} catch (ClassNotFoundException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private List<Status> testSearch(String queryText) throws TwitterException {
+		Query query = new Query(queryText);
+		ArrayList<Status> tweets = new ArrayList<Status>();
+		while (query != null) {
+			try {
+				QueryResult result = twitter.search(query);
+				tweets.addAll(result.getTweets());
+				System.out.println("Gathered " + tweets.size() + " tweets");
+				
+
+				query = result.nextQuery();
+
+			}
+
+			catch (TwitterException te) {
+				System.out.println("Couldn't connect: " + te);
+			}
+			
+
+		}
+
+		return tweets;
+
+		/*
+		 * Query query = new Query(queryText); //QueryResult result;
+		 * 
+		 * int numberOfTweets = 512; long lastID = Long.MAX_VALUE;
+		 * ArrayList<Status> tweets = new ArrayList<Status>(); while
+		 * (tweets.size () < numberOfTweets) { if (numberOfTweets -
+		 * tweets.size() > 100) query.setCount(100); else
+		 * query.setCount(numberOfTweets - tweets.size()); try { QueryResult
+		 * result = twitter.search(query); tweets.addAll(result.getTweets());
+		 * System.out.println("Gathered " + tweets.size() + " tweets"); for
+		 * (Status t: tweets) if(t.getId() < lastID) lastID = t.getId(); }
+		 * 
+		 * catch (TwitterException te) { handleTwitterException(te); };
+		 * query.setMaxId(lastID-1); }
+		 */
+
+		// result = twitter.search(query);
+		// List<Status> statuses = result.getTweets();
+
+	}
+	
+	private List<String> searchStatuses(String username) throws IOException {
+		List<String> statuses = new ArrayList<String>();
+		
+		//String filename = "Statuses" + File.separator + username + ".txt";
+		String filename = "foo.txt";
+		
+		File file = new File(filename);
+
+		if (file.isFile()) {
+			// http://stackoverflow.com/questions/5868369/how-to-read-a-large-text-file-line-by-line-using-java
+			try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+				String line;
+				while ((line = br.readLine()) != null) {
+					String s = line.trim();
+
+					if (s.length() > 0) {
+						System.out.println("Got tweet ID from file: " + s);
+						statuses.add(s);
+					}
+				}
+			}
+		}
+		
+		return statuses;
+	}
+	
+	private List<Status> idsToStatuses(List<String> ids) throws TwitterException {
+		List<Status> statuses = new ArrayList<Status>();
+		
+		Iterator<String> itr = ids.iterator();
+		
+		int count = 0;
+		while (itr.hasNext()) {
+			count++;
+			String id = itr.next();
+			
+			Status status = null;
+			
+			for (int i = 1; i <= MAX_API_ATTEMPTS; i++) {
+				try {
+					status = twitter.showStatus(Long.parseLong(id));
+					
+					System.out.println("Got showStatus from id " + Long.parseLong(id) + " - #" + Integer.toString(count) + " / " + ids.size());
+					
+					break;
+				} catch (TwitterException te) {
+					if (i == MAX_API_ATTEMPTS) {
+						throw te;
+					}
+					handleTwitterException(te);
+				}
+			}
+			
+			if (status != null) {
+				statuses.add(status);
+			}
+		}
+		
+		return statuses;
+	}
 
 	public static void main(String[] args) {
+
 		TwitterImageSync tis = TwitterImageSync.getInstance();
 
 		try {
@@ -373,11 +534,42 @@ public class TwitterImageSync {
 		}
 
 		try {
-			tis.sync();
+			// tis.sync();
+			
+			List<String> ids = tis.searchStatuses("");
+			
+			
+			List<Status> statuses = tis.idsToStatuses(ids);
+			
+			
+			
+			try (FileOutputStream out = new FileOutputStream("statuses_from_ids.txt");
+					ObjectOutputStream oos = new ObjectOutputStream(out)) {
+				oos.writeObject(statuses);
+			}
+			
+			for (Status status : statuses) {
+				System.out.println("finished, id: " + Long.toString(status.getId()));
+			}
+
+			/*List<Status> searchStatuses = tis.testSearch("from:***REMOVED*** filter:media");
+
+			try (FileOutputStream out = new FileOutputStream("testSearch.txt");
+					ObjectOutputStream oos = new ObjectOutputStream(out)) {
+				oos.writeObject(searchStatuses);
+			}
+
+			System.out.println("# statuses: " + searchStatuses.size());
+
+			System.out
+					.println("last status id: " + Long.toString(searchStatuses.get(searchStatuses.size() - 1).getId()));*/
 		} catch (TwitterException e) {
 			e.printStackTrace();
-		} catch (MalformedURLException e) {
+			/*
+			 * } catch (MalformedURLException e) { e.printStackTrace();
+			 */
 		} catch (IOException e) {
+			e.printStackTrace();
 		}
 
 		/*
