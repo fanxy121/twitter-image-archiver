@@ -55,5 +55,16 @@ local.properties
 .scala_dependencies
 .worksheet
 
-images/
-twitter4j.properties
+
+*.json
+*.ser
+*.txt
+
+*.txt
+*.png
+
+releases/
+
+Likes/
+Searches/
+Timelines/
