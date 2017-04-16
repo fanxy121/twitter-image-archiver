@@ -84,7 +84,7 @@ public class TwitterResponse {
 		// Elements els = doc.select("li.js-stream-item");
 		// Elements els = doc.getElementsByClass("js-stream-item");
 		// System.out.println("els.size: " + els.size());
-		// System.out.println("html size: " + items_html.length());
+		//System.out.println("html size: " + items_html.length());
 
 		for (Element el : doc.getElementsByClass("js-stream-item")) {
 			String id = el.attr("data-item-id");

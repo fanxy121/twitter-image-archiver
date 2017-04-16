@@ -2,23 +2,29 @@
 Download images from Twitter and archive them locally
 
 ## Features
-* Download all images tweeted by a user (what you see when you scroll through https://twitter.com/\<username\>/media_timeline)
-* Not limited to the most recent ~3200 tweets like other tools
+* Timelines: Download all non-retweeted images tweeted by a username (what you see when you scroll through https://twitter.com/<username>/media_timeline, combined with the search results of "from:<username> filter:media" on Twitter sorted by "Latest")
+* Searches: Download all search results for a search query (what you see when you scroll through the search results on Twitter sorted by "Latest")
+* No restrictions that other tools have (e.g. ~3200 most recent tweets, tweets from the last ~7 days, etc.)
 
 ## Usage
-* Put usernames to download images for in "Timelines/usernames.txt", one per line, no "@"s
-* Images will be saved as "Timelines/\<username\>/YYMMDD-hhmmss_filename"
-* Logs for each image will be saved in "Timelines/\<username\>/\<username\>.txt" as "YYMMDD-hhmmss,filename,tweet ID,tweet text"
-* ID of the oldest tweet to get for a specific user is read from - and automatically updated to - "Timelines/\<username\>.txt" (tweet URLs are formatted as https://twitter.com/\<username\>/status/\<ID\>)
-
-## Known issues
-* Scrolling through /media_timeline eventually stops sometimes (after ~1100 tweets shown from one account I tried with)
+* "Timelines" and "Searches" are referred to as "query types"
+  * For timelines, "queries" refers to the usernames you'd like to download images for
+  * For searches, "queries" refers to what you type into the search bar on Twitter
+* Put queries in "<query type>/<query_type>_queries.txt", one per line (no "@"s for usernames)
+  * **This is the only thing you actually need to do**
+  * For example, if you want to archive the images tweeted by @realDonaldTrump:
+    * Create a directory named "Timelines" in the same directory as this program, (if it doesn't exist already)
+    * In the directory "Timelines", create a file named "Timelines_queries.txt", (if it doesn't exist already)
+    * Open the file "Timelines_queries.txt" and enter "realDonaldTrump" (no quotes), then save the file
+    * Run the program
+* Images will be saved as "<query type>/<query>/YYMMDD-hhmmss_filename"
+* Logs for each image will be saved in "<query type>/<query>/<query>_logs.txt" as "YYMMDD-hhmmss,filename,tweet ID,tweet text"
+* ID of the oldest tweet to get for a specific user is read from and automatically updated to "<query type>/<query>/<query>_sinceId.txt" (for reference, tweet URLs are formatted as https://twitter.com/<username>/status/<ID>)
 
 ## In progress
 * Auto update
 * Images from twitpic, imgur, etc.
-* Images from Twitter's search function
-* Liked images
+* Images liked by a user
 * gifs, videos
 
 ## Credits
