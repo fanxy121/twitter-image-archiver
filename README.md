@@ -1,5 +1,5 @@
 # Twitter Image Archiver
-Download images from Twitter and archive them locally
+I like saving images from Twitter but there are too many accounts I follow, who tweet too many images, for me to do manually, so I made this
 
 ## Features
 * Timelines: Download all non-retweeted images tweeted by a username (what you see when you scroll through https://twitter.com/(username)/media_timeline, combined with the search results of "from:(username) filter:media" on Twitter sorted by "Latest")
@@ -24,7 +24,7 @@ Download images from Twitter and archive them locally
 ## In progress
 * Auto update
 * Images from twitpic, imgur, etc.
-* Images liked by a user
+* Images liked/retweeted by a user
 * gifs, videos
 
 ## Credits

@@ -5,12 +5,14 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 //import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectOutputStream;
 //import java.io.ObjectInputStream;
 //import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
@@ -23,6 +25,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import lib.TwitterSearchAPI.main.java.uk.co.tomkdickinson.twitter.search.InvalidQueryException;
 import lib.TwitterSearchAPI.main.java.uk.co.tomkdickinson.twitter.search.Tweet;
@@ -39,6 +42,10 @@ public class TwitterImageArchiver {
 	private static final int MEDIA_TIMELINE = TwitterSearch.MEDIA_TIMELINE;
 	private static final int LIKES = TwitterSearch.LIKES;
 
+	private static final int MAX_ATTEMPTS = 3;
+
+	private static final int BACKOFF_TIME_SECONDS = 60;
+
 	private TwitterImageArchiver() {
 		twitterSearch = new TwitterSearchImpl();
 	}
@@ -50,28 +57,27 @@ public class TwitterImageArchiver {
 		return instance;
 	}
 
+	// returns true if we can try again, false if exception can't be helped
+	private boolean handleException(Exception e, int backoffSeconds) throws Exception {
+		try {
+			if (e instanceof IOException) {
+				System.out.println("Handling IOException, sleeping for "
+						+ backoffSeconds + "seconds");
+				TimeUnit.SECONDS.sleep(backoffSeconds);
+			} else if (e instanceof FileNotFoundException) {
+				return false;
+			} 
+		} catch (InterruptedException ie) {
+			System.out.println("Interrupted during sleep");
+			throw e;
+		}
+		
+		return true;
+	}
+
 	private List<Tweet> getTweets(String query, int queryType, String sinceId)
 			throws InvalidQueryException {
 		return twitterSearch.search(query, queryType, sinceId);
-	}
-
-	private String getQueryTypeDirectory(int queryType) {
-		String directory = null;
-
-		switch (queryType) {
-			case SEARCH:
-				directory = "Searches";
-				break;
-			case MEDIA_TIMELINE:
-				directory = "Timelines";
-				break;
-			case LIKES:
-				directory = "Likes";
-				break;
-			default:
-		}
-
-		return directory;
 	}
 
 	private String getQueryTypeString(int queryType) {
@@ -93,7 +99,11 @@ public class TwitterImageArchiver {
 		return queryTypeString;
 	}
 
-	private String getQueriesFilename(int queryType) {
+	private String getQueryTypeDirectory(int queryType) {
+		return getQueryTypeString(queryType);
+	}
+
+	private String getQueryFilename(int queryType) {
 		String s = getQueryTypeDirectory(queryType) + File.separator + getQueryTypeString(queryType)
 				+ "_queries.txt";
 		System.out.println("query file: " + s);
@@ -103,7 +113,7 @@ public class TwitterImageArchiver {
 	private List<String> getQueries(int queryType) throws IOException {
 		List<String> queries = new ArrayList<String>();
 
-		File file = new File(getQueriesFilename(queryType));
+		File file = new File(getQueryFilename(queryType));
 
 		if (file.isFile()) {
 			try (BufferedReader br = new BufferedReader(new FileReader(file))) {
@@ -170,7 +180,7 @@ public class TwitterImageArchiver {
 		return query.replace(":", ".");
 	}
 
-	private void sync() throws IOException {
+	private void sync() throws Exception {
 		for (int queryType : new int[] {SEARCH, MEDIA_TIMELINE}) {
 			System.out.println("Getting queries from file");
 			List<String> queries = getQueries(queryType);
@@ -199,11 +209,11 @@ public class TwitterImageArchiver {
 
 				if (tweets.size() > 0) {
 					System.out.println("Got " + tweets.size() + " tweets for: " + query);
-					/*
-					 * try (FileOutputStream out = new FileOutputStream(query +
-					 * ".ser"); ObjectOutputStream oos = new
-					 * ObjectOutputStream(out)) { oos.writeObject(tweets); }
-					 */
+
+					try (FileOutputStream out = new FileOutputStream(query + ".ser");
+							ObjectOutputStream oos = new ObjectOutputStream(out)) {
+						oos.writeObject(tweets);
+					}
 
 					System.out.println("Getting media for: " + query);
 					saveMedia(query, queryType, tweets);
@@ -221,7 +231,7 @@ public class TwitterImageArchiver {
 	 * private void recover() { // TODO }
 	 */
 
-	private void saveMedia(String query, int queryType, List<Tweet> tweets) throws IOException {
+	private void saveMedia(String query, int queryType, List<Tweet> tweets) throws Exception {
 		query = getPathableQuery(query);
 
 		System.out.println("Getting media");
@@ -263,14 +273,26 @@ public class TwitterImageArchiver {
 
 					byte[] response = new byte[0];
 					// get file
-					try (InputStream inputStream = new BufferedInputStream(url.openStream());
-							ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-						byte[] byteBuffer = new byte[1024];
-						int n = 0;
-						while (-1 != (n = inputStream.read(byteBuffer))) {
-							outputStream.write(byteBuffer, 0, n);
+					for (int j = 1; i <= MAX_ATTEMPTS; i++) {
+						try (InputStream inputStream = new BufferedInputStream(url.openStream());
+								ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+							byte[] byteBuffer = new byte[1024];
+							int n = 0;
+							while (-1 != (n = inputStream.read(byteBuffer))) {
+								outputStream.write(byteBuffer, 0, n);
+							}
+							response = outputStream.toByteArray();
+							
+							break;
+						} catch (Exception e) {
+							if (i == MAX_ATTEMPTS) {
+								throw e;
+							}
+							
+							if (!handleException(e, (int) (BACKOFF_TIME_SECONDS * Math.pow(2, j)))) {
+								break;
+							}
 						}
-						response = outputStream.toByteArray();
 					}
 
 					file.getParentFile().mkdirs();
@@ -309,18 +331,8 @@ public class TwitterImageArchiver {
 
 		try {
 			tia.sync();
-		} catch (IOException e) {
+		} catch (Exception e) {
 			e.printStackTrace();
 		}
-
-		/*
-		 * List<Tweet> tw = null;
-		 * 
-		 * try { tia.getTweets("***REMOVED***", MEDIA_TIMELINE, null); } catch
-		 * (InvalidQueryException e) { // TODO Auto-generated catch block
-		 * e.printStackTrace(); }
-		 * 
-		 * System.out.println(tw.size());
-		 */
 	}
 }
