@@ -60,18 +60,18 @@ public class TwitterImageArchiver {
 	// returns true if we can try again, false if exception can't be helped
 	private boolean handleException(Exception e, int backoffSeconds) throws Exception {
 		try {
-			if (e instanceof IOException) {
-				System.out.println("Handling IOException, sleeping for "
-						+ backoffSeconds + "seconds");
-				TimeUnit.SECONDS.sleep(backoffSeconds);
-			} else if (e instanceof FileNotFoundException) {
+			if (e instanceof FileNotFoundException) {
 				return false;
-			} 
+			} else if (e instanceof IOException) {
+				System.out.println(
+						"Handling IOException, sleeping for " + backoffSeconds + "seconds");
+				TimeUnit.SECONDS.sleep(backoffSeconds);
+			}
 		} catch (InterruptedException ie) {
 			System.out.println("Interrupted during sleep");
 			throw e;
 		}
-		
+
 		return true;
 	}
 
@@ -282,16 +282,18 @@ public class TwitterImageArchiver {
 								outputStream.write(byteBuffer, 0, n);
 							}
 							response = outputStream.toByteArray();
-							
-							System.out.println("successfully got " + response.length + "bytes for " + url);
-							
+
+							System.out.println(
+									"successfully got " + response.length + "bytes for " + url);
+
 							break;
 						} catch (Exception e) {
 							if (j == MAX_ATTEMPTS) {
 								throw e;
 							}
-							
-							if (!handleException(e, (int) (BACKOFF_TIME_SECONDS * Math.pow(2, j)))) {
+
+							if (!handleException(e,
+									(int) (BACKOFF_TIME_SECONDS * Math.pow(2, j)))) {
 								break;
 							}
 						}
