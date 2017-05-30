@@ -26,6 +26,8 @@ I like saving images from Twitter but there are too many accounts I follow, who 
 * Images from twitpic, imgur, etc.
 * Images liked/retweeted by a user
 * gifs, videos
+* Better logging, metadata, etc.
+* Backups/recovery
 
 ## Credits
 This project uses a modified version of Tom Dickinson's [Twitter Search API](https://github.com/tomkdickinson/TwitterSearchAPI) for Java. He has some very helpful instructional posts at his [blog](http://tomkdickinson.co.uk/).
