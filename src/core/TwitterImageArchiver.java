@@ -273,7 +273,7 @@ public class TwitterImageArchiver {
 
 					byte[] response = new byte[0];
 					// get file
-					for (int j = 1; i <= MAX_ATTEMPTS; i++) {
+					for (int j = 1; j <= MAX_ATTEMPTS; j++) {
 						try (InputStream inputStream = new BufferedInputStream(url.openStream());
 								ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 							byte[] byteBuffer = new byte[1024];
@@ -283,9 +283,11 @@ public class TwitterImageArchiver {
 							}
 							response = outputStream.toByteArray();
 							
+							System.out.println("successfully got " + response.length + "bytes for " + url);
+							
 							break;
 						} catch (Exception e) {
-							if (i == MAX_ATTEMPTS) {
+							if (j == MAX_ATTEMPTS) {
 								throw e;
 							}
 							
