@@ -1,32 +1,19 @@
 package core;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileNotFoundException;
+import java.io.*;
 //import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.ObjectOutputStream;
 //import java.io.ObjectInputStream;
 //import java.io.ObjectOutputStream;
-import java.io.PrintWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import com.sun.xml.internal.ws.policy.privateutil.PolicyUtils;
 import lib.TwitterSearchAPI.main.java.uk.co.tomkdickinson.twitter.search.InvalidQueryException;
 import lib.TwitterSearchAPI.main.java.uk.co.tomkdickinson.twitter.search.Tweet;
 import lib.TwitterSearchAPI.main.java.uk.co.tomkdickinson.twitter.search.TwitterSearch;
@@ -75,8 +62,7 @@ public class TwitterImageArchiver {
 		return true;
 	}
 
-	private List<Tweet> getTweets(String query, int queryType, String sinceId)
-			throws InvalidQueryException {
+	private List<Tweet> getTweets(String query, int queryType, String sinceId) throws InvalidQueryException {
 		return twitterSearch.search(query, queryType, sinceId);
 	}
 
@@ -104,8 +90,7 @@ public class TwitterImageArchiver {
 	}
 
 	private String getQueryFilename(int queryType) {
-		String s = getQueryTypeDirectory(queryType) + File.separator + getQueryTypeString(queryType)
-				+ "_queries.txt";
+		String s = getQueryTypeDirectory(queryType) + File.separator + getQueryTypeString(queryType) + ".txt";
 		System.out.println("query file: " + s);
 		return s;
 	}
@@ -131,106 +116,55 @@ public class TwitterImageArchiver {
 		return queries;
 	}
 
-	private String getSinceIdFilename(String query, int queryType) {
+	private String getTweetsFilename(String query, int queryType) {
 		query = getPathableQuery(query);
 
-		return getQueryTypeDirectory(queryType) + File.separator + query + File.separator + query
-				+ "_sinceId.txt";
+		return getQueryTypeDirectory(queryType) + File.separator + query + File.separator + query + ".ser";
 	}
 
 	private String getSinceId(String query, int queryType) throws IOException {
-		query = getPathableQuery(query);
+		List<Tweet> tweets = importTweets(query, queryType);
 
-		String sinceId = null;
-
-		File file = new File(getSinceIdFilename(query, queryType));
-
-		if (file.isFile()) {
-			try (BufferedReader br = new BufferedReader(new FileReader(file))) {
-				String line;
-				while ((line = br.readLine()) != null) {
-					String s = line.trim();
-
-					if (s.length() > 0) {
-						sinceId = s;
-						break;
-					}
-				}
-			}
-		}
-
-		return sinceId;
-	}
-
-	private void setSinceId(String query, String sinceId, int queryType) throws IOException {
-		query = getPathableQuery(query);
-
-		String pathString = getSinceIdFilename(query, queryType);
-
-		File file = new File(pathString);
-
-		if (!file.isFile()) {
-			file.getParentFile().mkdirs();
-		}
-
-		Files.write(Paths.get(pathString), sinceId.getBytes());
+		return (tweets.size() > 0) ? tweets.get(tweets.size() - 1).getId() : "0";
 	}
 
 	private String getPathableQuery(String query) {
 		return query.replace(":", ".");
 	}
 
-	private void sync() throws Exception {
-		for (int queryType : new int[] {SEARCH, MEDIA_TIMELINE}) {
-			System.out.println("Getting queries from file");
-			List<String> queries = getQueries(queryType);
-			System.out.println("Got " + queries.size() + " query(s) from file");
+	private List<Tweet> importTweets(String query, int queryType) {
+		List<Tweet> tweets = new ArrayList<Tweet>();
 
-			for (String query : queries) {
-				System.out.println("Working with query: " + query);
-				String sinceId = getSinceId(query, queryType);
-				System.out.println("Got sinceId: " + sinceId);
+		try (FileInputStream in = new FileInputStream(getTweetsFilename(query, queryType));
+			ObjectInputStream ois = new ObjectInputStream(in)) {
+			tweets.addAll((List<Tweet>) ois.readObject());
+		} catch (FileNotFoundException e) {
+			return tweets;
+		} catch (IOException e) {
+			e.printStackTrace();
+		} catch (ClassNotFoundException e) {
+			e.printStackTrace();
+		}
 
-				System.out.println("Getting tweets for: " + query);
-				List<Tweet> tweets = new ArrayList<Tweet>();
+		return tweets;
+	}
 
-				try {
-					tweets.addAll(getTweets(query, queryType, sinceId));
-					if (queryType == MEDIA_TIMELINE) {
-						System.out.println("Getting search tweets for: " + query);
-						tweets.addAll(
-								getTweets("from:" + query + " filter:media", SEARCH, sinceId));
-					}
-				} catch (InvalidQueryException e) {
-					e.printStackTrace();
-				}
+	private void exportTweets(String query, int queryType, List<Tweet> tweets) {
+		List<Tweet> oldTweets = importTweets(query, queryType);
+		oldTweets.addAll(tweets);
 
-				System.out.println("Finished getting tweets for " + query);
+		File file = new File(getTweetsFilename(query, queryType));
+		file.getParentFile().mkdirs();
 
-				if (tweets.size() > 0) {
-					System.out.println("Got " + tweets.size() + " tweets for: " + query);
-
-					try (FileOutputStream out = new FileOutputStream(query + ".ser");
-							ObjectOutputStream oos = new ObjectOutputStream(out)) {
-						oos.writeObject(tweets);
-					}
-
-					System.out.println("Getting media for: " + query);
-					saveMedia(query, queryType, tweets);
-					System.out.println("Finished getting media for " + query);
-
-					System.out.println(
-							"Setting sinceId of " + tweets.get(0).getId() + "for: " + query);
-					setSinceId(query, tweets.get(0).getId(), queryType);
-				}
-			}
+		try (FileOutputStream out = new FileOutputStream(file);
+			 ObjectOutputStream oos = new ObjectOutputStream(out)) {
+			oos.writeObject(oldTweets);
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
 
-	/*
-	 * private void recover() { // TODO }
-	 */
-
+	// gets and saves images to disk from list of tweets
 	private void saveMedia(String query, int queryType, List<Tweet> tweets) throws Exception {
 		query = getPathableQuery(query);
 
@@ -244,28 +178,17 @@ public class TwitterImageArchiver {
 
 				// format path
 				String directory = getQueryTypeDirectory(queryType) + File.separator + query;
-
-				DateFormat df = new SimpleDateFormat("yyMMdd-HHmmss");
-				Date d = tweet.getCreatedAt();
-				String date = df.format(d);
-
-				String originalFilename = urlString.substring(urlString.lastIndexOf('/') + 1);
-
-				File file = new File(directory + File.separator + date + "_" + originalFilename);
-
-				String log = date + "," + originalFilename + "," + tweet.getId() + ",\""
-						+ tweet.getText() + "\"";
+				String filename = urlString.substring(urlString.lastIndexOf('/') + 1);
+				File file = new File(directory + File.separator + filename);
 
 				if (!file.isFile()) {
 					URL url;
 					try {
 						url = new URL(urlString + ":orig");
 					} catch (MalformedURLException e) {
-						try (FileWriter fw = new FileWriter(
-								directory + File.separator + "url_errors.txt", true);
-								BufferedWriter bw = new BufferedWriter(fw);
-								PrintWriter pw = new PrintWriter(bw)) {
-							pw.println(log + "," + urlString);
+						try (FileWriter fw = new FileWriter(directory + File.separator + "url_errors.txt", true);
+							 BufferedWriter bw = new BufferedWriter(fw); PrintWriter pw = new PrintWriter(bw)) {
+							pw.println(filename + "," + urlString);
 						}
 
 						continue;
@@ -275,7 +198,7 @@ public class TwitterImageArchiver {
 					// get file
 					for (int j = 1; j <= MAX_ATTEMPTS; j++) {
 						try (InputStream inputStream = new BufferedInputStream(url.openStream());
-								ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+							 ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 							byte[] byteBuffer = new byte[1024];
 							int n = 0;
 							while (-1 != (n = inputStream.read(byteBuffer))) {
@@ -283,8 +206,7 @@ public class TwitterImageArchiver {
 							}
 							response = outputStream.toByteArray();
 
-							System.out.println(
-									"successfully got " + response.length + "bytes for " + url);
+							System.out.println("successfully got " + response.length + "bytes for " + url);
 
 							break;
 						} catch (Exception e) {
@@ -292,8 +214,7 @@ public class TwitterImageArchiver {
 								throw e;
 							}
 
-							if (!handleException(e,
-									(int) (BACKOFF_TIME_SECONDS * Math.pow(2, j)))) {
+							if (!handleException(e, (int) (BACKOFF_TIME_SECONDS * Math.pow(2, j)))) {
 								break;
 							}
 						}
@@ -306,29 +227,50 @@ public class TwitterImageArchiver {
 						fos.write(response);
 					}
 
-					// add log with format: date,originalFilename,tweetId
-					try (FileWriter fw = new FileWriter(
-							directory + File.separator + query + "_logs.txt", true);
-							BufferedWriter bw = new BufferedWriter(fw);
-							PrintWriter pw = new PrintWriter(bw)) {
-						pw.println(log);
-					}
+					file.setLastModified(tweet.getCreatedAt().getTime());
 				}
 			}
 		}
 	}
 
-	/*
-	 * private static void importTweets(String filename) { // TODO try {
-	 * ObjectInputStream ois = new ObjectInputStream(new
-	 * FileInputStream(filename)); List<Tweet> tweets = (List<Tweet>)
-	 * ois.readObject();
-	 * 
-	 * System.out.println("# tweets: " + Integer.toString(tweets.size()));
-	 * System.out.println("Last twitterId: " + tweets.get(tweets.size() -
-	 * 1).getId()); } catch (IOException e) { e.printStackTrace(); } catch
-	 * (ClassNotFoundException e) { e.printStackTrace(); } }
-	 */
+	private void sync() throws Exception {
+		for (int queryType : new int[]{SEARCH, MEDIA_TIMELINE}) {
+			System.out.println("Getting queries from file");
+			List<String> queries = getQueries(queryType);
+			System.out.println("Got " + queries.size() + " queries from file");
+
+			for (String query : queries) {
+				System.out.println("Working with query: " + query);
+				String sinceId = getSinceId(query, queryType);
+				System.out.println("Got sinceId: " + sinceId);
+
+				System.out.println("Getting tweets for: " + query);
+				List<Tweet> tweets = new ArrayList<Tweet>();
+
+				try {
+					tweets.addAll(getTweets(query, queryType, sinceId));
+					if (queryType == MEDIA_TIMELINE) {
+						System.out.println("Getting search tweets for: " + query);
+						tweets.addAll(getTweets("from:" + query + " filter:media", SEARCH, sinceId));
+					}
+				} catch (InvalidQueryException e) {
+					e.printStackTrace();
+				}
+
+				System.out.println("Finished getting tweets for " + query);
+
+				if (tweets.size() > 0) {
+					System.out.println("Got " + tweets.size() + " tweets for: " + query);
+
+					exportTweets(query, queryType, tweets);
+
+					System.out.println("Getting media for: " + query);
+					saveMedia(query, queryType, tweets);
+					System.out.println("Finished getting media for " + query);
+				}
+			}
+		}
+	}
 
 	public static void main(String[] args) {
 		TwitterImageArchiver tia = TwitterImageArchiver.getInstance();
