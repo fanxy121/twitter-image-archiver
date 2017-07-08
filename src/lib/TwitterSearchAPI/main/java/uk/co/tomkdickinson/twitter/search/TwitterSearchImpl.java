@@ -9,12 +9,12 @@ public class TwitterSearchImpl extends TwitterSearch {
 
 	@Override
 	public void saveTweets(List<Tweet> tweets) {
-		if (tweets != null) {
+		/*if (tweets != null) {
 			for (Tweet tweet : tweets) {
 				System.out.println(counter.getAndIncrement() + 1 + "[" + tweet.getCreatedAt()
 						+ "] - " + tweet.getText());
 			}
-		}
+		}*/
 	}
 
 	/*
@@ -25,7 +25,7 @@ public class TwitterSearchImpl extends TwitterSearch {
 	 * TwitterSearch.MEDIA_TIMELINE, null);
 	 * 
 	 * try (FileOutputStream out = new
-	 * FileOutputStream("tweets_***REMOVED***_good.ser"); ObjectOutputStream oos = new
+	 * FileOutputStream("tweets_wait_ar_good.ser"); ObjectOutputStream oos = new
 	 * ObjectOutputStream(out)) { oos.writeObject(tweets); } catch
 	 * (FileNotFoundException e) { // TODO Auto-generated catch block
 	 * e.printStackTrace(); } catch (IOException e) { // TODO Auto-generated
@@ -35,7 +35,7 @@ public class TwitterSearchImpl extends TwitterSearch {
 	 * 
 	 * for (String s : urls) { System.out.println(i++ + " - " + s); } }
 	 * 
-	 * URL url = TwitterSearch.constructURL("from:***REMOVED*** filter:media", null);
+	 * URL url = TwitterSearch.constructURL("from:wait_ar filter:media", null);
 	 * 
 	 * System.out.println(url); }
 	 */

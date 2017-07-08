@@ -208,14 +208,10 @@ public class TwitterImageArchiver {
 	private void saveMedia(String query, int queryType, List<Tweet> tweets) throws Exception {
 		query = getPathableQuery(query);
 
-		System.out.println("Getting media");
-
 		for (int i = tweets.size() - 1; i >= 0; i--) {
 			Tweet tweet = tweets.get(i);
 
 			for (String urlString : tweet.getimageUrls()) {
-				System.out.println("Got URL " + urlString);
-
 				// format path
 				String directory = getQueryTypeDirectory(queryType) + File.separator + query;
 				String filename = urlString.substring(urlString.lastIndexOf('/') + 1);
@@ -275,12 +271,11 @@ public class TwitterImageArchiver {
 
 	private void sync() throws Exception {
 		for (int queryType : new int[]{SEARCH, MEDIA_TIMELINE}) {
-			System.out.println("Getting queries from file");
 			List<String> queries = getQueries(queryType);
 			System.out.println("Got " + queries.size() + " queries from file");
 
 			for (String query : queries) {
-				System.out.println("Working with query: " + query);
+				System.out.println("\nWorking with query: " + query);
 				String sinceId = getSinceId(query, queryType);
 				System.out.println("Got sinceId: " + sinceId);
 
@@ -296,8 +291,6 @@ public class TwitterImageArchiver {
 				} catch (InvalidQueryException e) {
 					e.printStackTrace();
 				}
-
-				System.out.println("Finished getting tweets for " + query);
 
 				if (tweets.size() > 0) {
 					System.out.println("Got " + tweets.size() + " tweets for: " + query);

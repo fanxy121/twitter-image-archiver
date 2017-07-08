@@ -34,7 +34,6 @@ public abstract class TwitterSearch {
 			throws InvalidQueryException {
 		TwitterResponse response;
 		URL url = constructURL(query, queryType, null);
-		System.out.println(url);
 		boolean continueSearch = true;
 		String minTweet = null;
 
