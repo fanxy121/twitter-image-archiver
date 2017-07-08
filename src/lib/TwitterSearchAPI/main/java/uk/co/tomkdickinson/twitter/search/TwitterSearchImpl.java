@@ -9,12 +9,12 @@ public class TwitterSearchImpl extends TwitterSearch {
 
 	@Override
 	public void saveTweets(List<Tweet> tweets) {
-		if (tweets != null) {
+		/*if (tweets != null) {
 			for (Tweet tweet : tweets) {
 				System.out.println(counter.getAndIncrement() + 1 + "[" + tweet.getCreatedAt()
 						+ "] - " + tweet.getText());
 			}
-		}
+		}*/
 	}
 
 	/*
