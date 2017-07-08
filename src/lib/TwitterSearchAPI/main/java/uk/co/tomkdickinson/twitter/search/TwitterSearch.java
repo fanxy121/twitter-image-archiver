@@ -113,13 +113,8 @@ public abstract class TwitterSearch {
 			return gson.fromJson(reader, TwitterResponse.class);
 		} catch (IOException e) {
 			// If we get an IOException, sleep for 5 seconds and retry.
-			System.err.println("Could not connect to Twitter. Retrying in 5 seconds.");
-			try {
-				Thread.sleep(5000);
-				return executeSearch(url);
-			} catch (InterruptedException e2) {
-				e.printStackTrace();
-			}
+			System.err.println("Could not connect to Twitter");
+			e.printStackTrace();
 		} finally {
 			try {
 				if (reader != null) {

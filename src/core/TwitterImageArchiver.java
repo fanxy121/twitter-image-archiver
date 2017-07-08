@@ -8,6 +8,8 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -29,7 +31,7 @@ public class TwitterImageArchiver {
 	private static final int MEDIA_TIMELINE = TwitterSearch.MEDIA_TIMELINE;
 	private static final int LIKES = TwitterSearch.LIKES;
 
-	private static final int MAX_ATTEMPTS = 3;
+	private static final int MAX_RETRIES = 3;
 
 	private static final int BACKOFF_TIME_SECONDS = 60;
 
@@ -119,13 +121,13 @@ public class TwitterImageArchiver {
 	private String getTweetsFilename(String query, int queryType) {
 		query = getPathableQuery(query);
 
-		return getQueryTypeDirectory(queryType) + File.separator + query + File.separator + query + ".ser";
+		return "Tweets" + File.separator + getQueryTypeDirectory(queryType) + File.separator + query + File.separator + query + ".ser";
 	}
 
 	private String getSinceId(String query, int queryType) throws IOException {
 		List<Tweet> tweets = importTweets(query, queryType);
 
-		return (tweets.size() > 0) ? tweets.get(tweets.size() - 1).getId() : "0";
+		return (tweets.size() > 0) ? tweets.get(0).getId() : "0";
 	}
 
 	private String getPathableQuery(String query) {
@@ -150,18 +152,56 @@ public class TwitterImageArchiver {
 	}
 
 	private void exportTweets(String query, int queryType, List<Tweet> tweets) {
-		List<Tweet> oldTweets = importTweets(query, queryType);
-		oldTweets.addAll(tweets);
+		tweets.addAll(importTweets(query, queryType));
 
 		File file = new File(getTweetsFilename(query, queryType));
 		file.getParentFile().mkdirs();
 
 		try (FileOutputStream out = new FileOutputStream(file);
 			 ObjectOutputStream oos = new ObjectOutputStream(out)) {
-			oos.writeObject(oldTweets);
+			oos.writeObject(tweets);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+
+	private List<Tweet> mergeTweets(List<Tweet> tweets1, List<Tweet> tweets2) {
+		List<Tweet> ret = new ArrayList<Tweet>();
+
+		int i = 0;
+		int j = 0;
+
+		while (i < tweets1.size() || j < tweets2.size()) {
+			if (i < tweets1.size() && j < tweets2.size()) {
+				Tweet t1 = tweets1.get(i);
+				Tweet t2 = tweets2.get(j);
+
+				long t1Id = Long.parseLong(t1.getId());
+				long t2Id = Long.parseLong(t2.getId());
+
+				if (t1Id < t2Id) {
+					ret.add(t1);
+					i++;
+				} else if (t1Id == t2Id) {
+					ret.add(t1);
+					i++;
+					j++;
+				} else {
+					ret.add(t2);
+					j++;
+				}
+			} else if (i < tweets1.size()) {
+				while (i < tweets1.size()) {
+					ret.add(tweets1.get(i++));
+				}
+			} else {
+				while (j < tweets2.size()) {
+					ret.add(tweets2.get(j++));
+				}
+			}
+		}
+
+		return ret;
 	}
 
 	// gets and saves images to disk from list of tweets
@@ -196,7 +236,7 @@ public class TwitterImageArchiver {
 
 					byte[] response = new byte[0];
 					// get file
-					for (int j = 1; j <= MAX_ATTEMPTS; j++) {
+					for (int j = 0; j <= MAX_RETRIES; j++) {
 						try (InputStream inputStream = new BufferedInputStream(url.openStream());
 							 ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 							byte[] byteBuffer = new byte[1024];
@@ -210,7 +250,7 @@ public class TwitterImageArchiver {
 
 							break;
 						} catch (Exception e) {
-							if (j == MAX_ATTEMPTS) {
+							if (j == MAX_RETRIES) {
 								throw e;
 							}
 
@@ -222,7 +262,7 @@ public class TwitterImageArchiver {
 
 					file.getParentFile().mkdirs();
 
-					// save file
+					// save image file
 					try (FileOutputStream fos = new FileOutputStream(file)) {
 						fos.write(response);
 					}
@@ -251,7 +291,7 @@ public class TwitterImageArchiver {
 					tweets.addAll(getTweets(query, queryType, sinceId));
 					if (queryType == MEDIA_TIMELINE) {
 						System.out.println("Getting search tweets for: " + query);
-						tweets.addAll(getTweets("from:" + query + " filter:media", SEARCH, sinceId));
+						tweets = mergeTweets(tweets, getTweets("from:" + query + " filter:media", SEARCH, sinceId));
 					}
 				} catch (InvalidQueryException e) {
 					e.printStackTrace();
